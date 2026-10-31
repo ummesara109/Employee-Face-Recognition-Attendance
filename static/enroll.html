@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Enroll employee</title><link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js"></script>
+</head><body>
+<nav><div class="nav-brand">FaceAttend</div><div class="nav-links"><a href="/" >Check in</a><a href="/enroll.html" class="active">Register</a></div></nav>
+<main>
+  <div class="page-heading"><span class="eyebrow">EMPLOYEE MANAGEMENT</span><h1>Register employee</h1><p>Add an employee to the attendance system in a few simple steps.</p></div>
+  <div class="card">
+    <h2>Employee details</h2><p class="muted">Enter the employee information below.</p>
+    <div class="row"><label>Employee ID<input id="code" placeholder="e.g. EMP001" autocomplete="off"></label><label>Full name<input id="name" placeholder="e.g. Asha Kumar" autocomplete="name"></label></div>
+    <h2 class="section-title">Registration method</h2><div class="row mode-buttons"><button id="withFace" type="button">Register with face</button><button id="withoutFace" class="secondary" type="button">Register without face</button></div>
+  </div>
+  <section id="faceSection" hidden>
+    <div class="video-wrap"><video id="video" playsinline muted></video></div>
+    <div class="camera-caption"><strong>Face capture</strong><span>Look at the camera in good lighting.</span></div><button id="capture" disabled>Capture face (5 samples)</button>
+  </section>
+  <button id="saveNoFace" hidden>Register without face</button>
+  <div id="status" class="status info">Enter employee ID and full name, then choose With Face or Without Face.</div>
+  <small class="help-text">With face: capture five samples to enable face check-in. Without face: register now and use an alternative check-in method.</small>
+</main>
+<script src="/common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const video = $("video"), status = makeStatus($("status"));
+const captureBtn = $("capture"), withFaceBtn = $("withFace"), withoutFaceBtn = $("withoutFace");
+let cameraStarted = false, modelsLoaded = false, busy = false;
+const SAMPLES = 5;
+async function startFaceMode() {
+  $("faceSection").hidden = false; $("saveNoFace").hidden = true;
+  withFaceBtn.disabled = true; withoutFaceBtn.disabled = true;
+  try {
+    if (!cameraStarted) { await startCamera(video); cameraStarted = true; }
+    if (!modelsLoaded) { await loadModels(status); modelsLoaded = true; }
+    status("Camera ready. Your live face should be visible. Click Capture face (5 samples).", "ok");
+    captureBtn.disabled = false;
+    withFaceBtn.disabled = false; withoutFaceBtn.disabled = false;
+  } catch (e) {
+    status("Camera/model error: " + e.message + ". Allow camera permission and use localhost or HTTPS.", "bad");
+    withFaceBtn.disabled = false; withoutFaceBtn.disabled = false;
+  }
+}
+function employeeFields() {
+  const code = $("code").value.trim(), name = $("name").value.trim();
+  if (!code || !name) { status("Enter employee ID and full name first.", "warn"); return null; }
+  return {code, name};
+}
+async function saveEmployee(descriptors) {
+  const f = employeeFields(); if (!f) return false;
+  try {
+    const r = await fetch("/api/enroll", {method:"POST", headers: {"Content-Type":"application/json"}, body:JSON.stringify({emp_code:f.code, name:f.name, descriptors, registration_mode: descriptors.length ? "face" : "no-face"})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Registration failed");
+    status("✅ " + j.message, "ok"); $("code").value=""; $("name").value="";
+    return true;
+  } catch(e) { status("❌ " + e.message, "bad"); return false; }
+}
+withFaceBtn.onclick = startFaceMode;
+withoutFaceBtn.onclick = () => { $("faceSection").hidden=true; $("saveNoFace").hidden=false; captureBtn.disabled=true; status("Without-face mode selected. Click Register without face to save.", "info"); };
+$("saveNoFace").onclick = async () => { if(!employeeFields())return; $("saveNoFace").disabled=true; await saveEmployee([]); $("saveNoFace").disabled=false; };
+captureBtn.onclick = async () => {
+  if (busy) return; const f=employeeFields(); if(!f)return;
+  busy=true; captureBtn.disabled=true; const descriptors=[]; const started=Date.now();
+  try {
+    while(descriptors.length<SAMPLES && Date.now()-started<60000) {
+      if(video.readyState < 2 || !video.videoWidth) { status("Waiting for live camera frames…", "warn"); await sleep(250); continue; }
+      const det=await detectOne(video,true);
+      if(!det) { status("Show one face clearly in the camera. " + faceHint(), "warn"); await sleep(200); continue; }
+      descriptors.push(Array.from(det.descriptor)); status(`Capturing face samples: ${descriptors.length}/${SAMPLES}`, "info"); await sleep(300);
+    }
+    if(descriptors.length<SAMPLES) { status("Could not capture 5 samples within 60 seconds. Try again with better lighting.", "bad"); return; }
+    await saveEmployee(descriptors);
+  } catch(e) { status("Capture failed: " + e.message, "bad"); }
+  finally { busy=false; captureBtn.disabled=false; }
+};
+</script></body></html>

@@ -1,0 +1,14 @@
+# Employee face data and attendance: NEVER commit this
+attendance.db
+*.db
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets / editor
+.env
+.vscode/
+.DS_Store

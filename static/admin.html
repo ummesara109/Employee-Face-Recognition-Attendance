@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin</title><link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+</head><body>
+<nav><a href="/">Check in</a><a href="/enroll.html">Enroll</a><a class="active" href="/admin.html">Admin</a></nav>
+<main>
+  <h1>Admin</h1>
+  <div class="card">
+    <div class="row"><input id="user" placeholder="Admin ID"><input id="pw" type="password" placeholder="Admin password"></div>
+    <div class="row"><input id="day" type="date"><button id="load">Sign in &amp; Load</button></div>
+    <button id="csv" class="secondary">Download CSV for this date</button>
+    <button id="signout" class="secondary">Sign out on this computer</button>
+  </div>
+  <div id="msg" class="status info" style="display:none"></div>
+  <div class="card"><h3>Attendance</h3><table id="att"></table></div>
+  <div class="card"><h3>Enrolled employees</h3><table id="emps"></table></div>
+</main>
+<script src="/common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const msg = makeStatus($("msg"));
+$("day").value = new Date().toLocaleDateString("en-CA");
+$("pw").value = localStorage.getItem("adminPw") || "";
+$("user").value = localStorage.getItem("adminUser") || "";
+
+async function api(path, opts = {}) {
+  localStorage.setItem("adminPw", $("pw").value);
+  localStorage.setItem("adminUser", $("user").value.trim());
+  const r = await fetch(path, { ...opts, headers: adminHeaders() });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { localStorage.removeItem("adminUser"); localStorage.removeItem("adminPw"); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+async function load() {
+  try {
+    $("msg").style.display = "none";
+    const a = await api("/api/attendance?day=" + $("day").value);
+    $("att").innerHTML = "<tr><th>ID</th><th>Name</th><th>Check-in</th></tr>" +
+      (a.records.map(r => `<tr><td>${r.emp_code}</td><td>${r.name}</td><td>${r.check_in_time}</td></tr>`).join("") || "<tr><td colspan=3>No check-ins</td></tr>");
+    const e = await api("/api/employees");
+    $("emps").innerHTML = "<tr><th>ID</th><th>Name</th><th></th></tr>" +
+      e.employees.map(x => `<tr><td>${x.emp_code}</td><td>${x.name}</td><td><button class="danger" data-c="${x.emp_code}">Delete</button></td></tr>`).join("");
+  } catch (err) { $("msg").style.display = "block"; msg(err.message, "bad"); }
+}
+$("load").onclick = load;
+$("signout").onclick = () => { localStorage.removeItem("adminUser"); localStorage.removeItem("adminPw"); $("user").value = ""; $("pw").value = ""; };
+$("emps").onclick = async (ev) => {
+  const c = ev.target.dataset.c;
+  if (c && confirm("Delete " + c + " and their attendance?")) { await api("/api/employees/" + encodeURIComponent(c), { method: "DELETE" }); load(); }
+};
+$("csv").onclick = async () => {
+  const r = await fetch("/api/export.csv?day=" + $("day").value, { headers: adminHeaders() });
+  if (!r.ok) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await r.blob()); a.download = `attendance-${$("day").value}.csv`; a.click();
+};
+if ($("pw").value && $("user").value) load();
+else { $("msg").style.display = "block"; msg("Your data is safe. Enter the admin ID and password, then click Load to see attendance and enrolled employees.", "info"); }
+</script></body></html>

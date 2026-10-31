@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Face Check-in</title><link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js"></script>
+</head><body>
+<nav><div class="nav-brand">FaceAttend</div><div class="nav-links"><a href="/" class="active">Check in</a><a href="/enroll.html">Register</a></div></nav>
+<main>
+  <div class="page-heading"><span class="eyebrow">ATTENDANCE</span><h1>Employee check-in</h1><p>Look at the camera to verify your identity and record today’s attendance.</p></div>
+  <div class="card checkin-card"><div class="camera-caption"><strong>Camera scanner</strong><span>Keep your face centered and stay still.</span></div>
+  <div class="video-wrap"><video id="video" playsinline muted></video></div>
+  <div id="status" class="status info">Starting…</div>
+  <button id="again" class="secondary" style="display:none">Check in another person</button>
+  <p class="help-text">Face check-in works for employees registered with face data. If your face is not recognized, contact your administrator.</p></div>
+</main>
+<script src="/common.js"></script>
+<script>
+const video = document.getElementById("video");
+const setStatus = makeStatus(document.getElementById("status"));
+const againBtn = document.getElementById("again");
+let busy = false;
+
+// Set to true to ask people to blink once before checking in (basic anti-photo check).
+const REQUIRE_BLINK = false;
+
+async function run() {
+  againBtn.style.display = "none";
+  busy = false;
+  let baseline = 0, frames = 0, blinked = false;
+  setStatus("Show your face to the camera…", "info");
+  while (!busy) {
+    const det = await detectOne(video);
+    if (!det) { baseline = 0; frames = 0; blinked = false; setStatus(faceHint(), "warn"); await sleep(150); continue; }
+    if (det.detection.box.width / video.videoWidth < 0.15) { frames = 0; setStatus("Come a little closer to the camera…", "warn"); await sleep(150); continue; }
+    frames++;
+
+    if (REQUIRE_BLINK) {
+      const ear = avgEAR(det.landmarks);
+      if (!blinked) {
+        baseline = Math.max(ear, baseline * 0.995);
+        if (frames < 8 || baseline < 0.15) { setStatus("Hold still, looking at the camera…", "info"); await sleep(60); continue; }
+        setStatus("Now blink once 👁️", "info");
+        if (ear < baseline * 0.78) blinked = true;
+        await sleep(40);
+        continue;
+      }
+      if (ear < baseline * 0.88) { await sleep(60); continue; }
+    } else if (frames < 2) {
+      // a couple of steady frames so we don't send a blurry first capture
+      setStatus("Face detected, hold still…", "info");
+      await sleep(30);
+      continue;
+    }
+
+    busy = true;
+    setStatus("Verifying…", "info");
+    try {
+      const res = await fetch("/api/checkin", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ descriptor: Array.from(det.descriptor) }),
+      });
+      const j = await res.json();
+      const kind = j.status === "ok" ? "ok" : j.status === "already" ? "warn" : "bad";
+      setStatus((j.status === "ok" ? "✅ " : j.status === "already" ? "ℹ️ " : "❌ ") + j.message, kind);
+    } catch (e) { setStatus("Server error: " + e.message, "bad"); }
+    // Automatic: show the result for a few seconds, wait until the person
+    // has moved away, then get ready for the next employee. No button needed.
+    waitForNextPerson().then(run);
+  }
+}
+
+async function waitForNextPerson() {
+  await sleep(3500);
+  let absent = 0;
+  while (absent < 4) {
+    const det = await detectOne(video);
+    absent = det ? 0 : absent + 1;
+    await sleep(250);
+  }
+}
+againBtn.onclick = run;
+
+(async () => {
+  try {
+    await Promise.all([loadModels(setStatus), startCamera(video)]);   // camera and models start together
+    run();
+  } catch (e) { setStatus(e.message, "bad"); }
+})();
+</script></body></html>
